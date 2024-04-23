@@ -251,10 +251,10 @@ where
 			where
 				V: serde::de::MapAccess<'de>,
 			{
-				let mut jsonrpc = None;
-				let mut result = None;
-				let mut error = None;
-				let mut id = None;
+				let mut jsonrpc: Option<Option<TwoPointZero>> = None;
+				let mut result: Option<Option<StdCow<'_, T>>> = None;
+				let mut error: Option<Option<ErrorObject<'_>>> = None;
+				let mut id: Option<Id<'_>> = None;
 				while let Some(key) = map.next_key()? {
 					match key {
 						Field::Result => {
@@ -290,18 +290,22 @@ where
 				let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
 
 				let response = match (jsonrpc, result, error) {
-					(_, Some(_), Some(_)) => {
+					(_, Some(Some(_)), Some(Some(_))) => {
 						return Err(serde::de::Error::duplicate_field("result and error are mutually exclusive"))
 					}
-					(Some(jsonrpc), Some(result), None) => {
+					(Some(jsonrpc), Some(Some(result)), None | Some(None)) => {
 						Response { jsonrpc, payload: ResponsePayload::Success(result), id }
 					}
-					(Some(jsonrpc), None, Some(err)) => Response { jsonrpc, payload: ResponsePayload::Error(err), id },
-					(None, Some(result), _) => {
+					(Some(jsonrpc), None | Some(None), Some(Some(err))) => {
+						Response { jsonrpc, payload: ResponsePayload::Error(err), id }
+					}
+					(None, Some(Some(result)), _) => {
 						Response { jsonrpc: None, payload: ResponsePayload::Success(result), id }
 					}
-					(None, _, Some(err)) => Response { jsonrpc: None, payload: ResponsePayload::Error(err), id },
-					(_, None, None) => return Err(serde::de::Error::missing_field("result/error")),
+					(None, _, Some(Some(err))) => Response { jsonrpc: None, payload: ResponsePayload::Error(err), id },
+					(_, None | Some(None), None | Some(None)) => {
+						return Err(serde::de::Error::missing_field("result/error"))
+					}
 				};
 
 				Ok(response)
@@ -383,6 +387,17 @@ mod tests {
 		let exp =
 			Response { jsonrpc: Some(TwoPointZero), payload: ResponsePayload::success(99_u64), id: Id::Number(11) };
 		let dsr: Response<u64> = serde_json::from_str(r#"{"jsonrpc":"2.0", "result":99, "id":11}"#).unwrap();
+		assert_eq!(dsr.jsonrpc, exp.jsonrpc);
+		assert_eq!(dsr.payload, exp.payload);
+		assert_eq!(dsr.id, exp.id);
+	}
+
+	#[test]
+	fn deserialize_with_option_success_call() {
+		let exp =
+			Response { jsonrpc: Some(TwoPointZero), payload: ResponsePayload::success(99_u64), id: Id::Number(11) };
+		let dsr: Response<u64> =
+			serde_json::from_str(r#"{"jsonrpc":"2.0", "result":99, "error": null,"id":11}"#).unwrap();
 		assert_eq!(dsr.jsonrpc, exp.jsonrpc);
 		assert_eq!(dsr.payload, exp.payload);
 		assert_eq!(dsr.id, exp.id);
